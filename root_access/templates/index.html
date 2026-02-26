@@ -1,22 +1,44 @@
 <!doctype html>
-<html lang="en" data-theme="dark">
+<html lang="en" data-theme="dark" data-palette="ocean">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Root Access | Company Blog Aggregator</title>
+  <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='favicon.svg') }}">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@500;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}">
 </head>
 <body>
-  <header>
+  <header class="site-header">
     <div>
+      <p class="eyebrow">Root Access • News Intelligence</p>
       <h1>Root Access</h1>
       <p>Direct company news from official blogs — all in one chronological feed.</p>
     </div>
     <div class="header-actions">
-      <button id="themeToggle" type="button">Toggle theme</button>
+      <button id="themeToggle" type="button">🌗 Light / Dark</button>
+      <button id="settingsToggle" type="button">⚙️ Settings</button>
       <a class="refresh" href="/?refresh=1">Refresh feeds</a>
     </div>
   </header>
+
+  <section id="settingsPanel" class="settings" hidden>
+    <h2>Feed settings</h2>
+    <label class="setting-row">
+      <span>Color theme</span>
+      <select id="paletteSelect">
+        <option value="ocean">Ocean</option>
+        <option value="sunset">Sunset</option>
+        <option value="forest">Forest</option>
+      </select>
+    </label>
+    <label class="setting-row checkbox-row">
+      <input id="showCompanyFeeds" type="checkbox" checked>
+      <span>Show company feeds filter pills</span>
+    </label>
+  </section>
 
   <section class="meta">
     <div><strong>{{ posts|length }}</strong> articles</div>
@@ -44,6 +66,12 @@
     <button id="clearFilters" type="button">Clear</button>
   </section>
 
+  <section id="feedPills" class="feed-pills">
+    {% for company in companies %}
+      <button type="button" class="pill" data-company-pill="{{ company }}">{{ company }}</button>
+    {% endfor %}
+  </section>
+
   <main id="feedGrid" class="feed-grid">
     {% for post in posts %}
     <article class="card" data-company="{{ post.company }}" data-title="{{ post.title|lower }}" data-summary="{{ post.summary|lower }}">
@@ -51,10 +79,12 @@
         {% if post.image %}
           <img src="{{ post.image }}" alt="{{ post.company }} article image" loading="lazy">
         {% else %}
-          <div class="placeholder">{{ post.company }}</div>
+          <div class="placeholder" style="--company-color: {{ {'Spotify':'#1DB954','OpenAI':'#10A37F','Anthropic':'#D97706','xAI':'#E5E7EB','Microsoft':'#00A4EF','Google':'#4285F4','Minecraft':'#62B543','Disney':'#113CCF','Netflix':'#E50914','Amazon':'#FF9900','Paramount':'#0B5FFF','Warner Bros':'#0077FF'}.get(post.company, '#6f8cff') }}">
+            <span>{{ post.company }}</span>
+          </div>
         {% endif %}
         <div class="card-content">
-          <span class="badge">{{ post.company }}</span>
+          <span class="badge" style="--badge-color: {{ {'Spotify':'#1DB954','OpenAI':'#10A37F','Anthropic':'#D97706','xAI':'#E5E7EB','Microsoft':'#00A4EF','Google':'#4285F4','Minecraft':'#62B543','Disney':'#113CCF','Netflix':'#E50914','Amazon':'#FF9900','Paramount':'#0B5FFF','Warner Bros':'#0077FF'}.get(post.company, '#6f8cff') }}">{{ post.company }}</span>
           <h3>{{ post.title }}</h3>
           <p>{{ post.summary[:210] }}{% if post.summary|length > 210 %}...{% endif %}</p>
           <small>{{ post.published_display }}</small>
@@ -63,6 +93,10 @@
     </article>
     {% endfor %}
   </main>
+
+  <footer>
+    © {{ fetched_at[:4] }} Root Access. All article rights belong to their respective publishers.
+  </footer>
 
   <script src="{{ url_for('static', filename='app.js') }}"></script>
 </body>
