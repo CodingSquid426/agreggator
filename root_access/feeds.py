@@ -20,14 +20,17 @@ class FeedSource:
 
 SOURCES: list[FeedSource] = [
     FeedSource("OpenAI", "https://openai.com/news/rss.xml", "https://openai.com/news"),
-    FeedSource("Anthropic", "https://www.anthropic.com/news/rss.xml", "https://www.anthropic.com/news"),
-    FeedSource("xAI", "https://x.ai/blog/rss.xml", "https://x.ai/blog"),
+    FeedSource("Anthropic", "https://www.anthropic.com/news", "https://www.anthropic.com/news"),
+    FeedSource("xAI", "https://x.ai/news", "https://x.ai/news"),
     FeedSource("Spotify", "https://newsroom.spotify.com/feed/", "https://newsroom.spotify.com"),
     FeedSource("Microsoft", "https://blogs.microsoft.com/feed/", "https://blogs.microsoft.com"),
     FeedSource("Google", "https://blog.google/rss/", "https://blog.google"),
-    FeedSource("Minecraft", "https://www.minecraft.net/en-us/rss", "https://www.minecraft.net/en-us/articles"),
+    FeedSource("Minecraft", "https://www.minecraft.net/en-us/articles", "https://www.minecraft.net/en-us/articles"),
     FeedSource("Disney", "https://thewaltdisneycompany.com/feed/", "https://thewaltdisneycompany.com"),
-    FeedSource("Netflix", "https://about.netflix.com/en/newsroom/rss", "https://about.netflix.com/en/newsroom"),
+    FeedSource("Netflix", "https://about.netflix.com/en/newsroom", "https://about.netflix.com/en/newsroom"),
+    FeedSource("Amazon", "https://www.aboutamazon.com/news", "https://www.aboutamazon.com/news"),
+    FeedSource("Paramount", "https://www.paramount.com/news", "https://www.paramount.com/news"),
+    FeedSource("Warner Bros", "https://www.warnerbrosdiscovery.com/news-and-insights", "https://www.warnerbrosdiscovery.com/news-and-insights"),
 ]
 
 
@@ -73,20 +76,27 @@ def _extract_image(entry: Any) -> str | None:
     return None
 
 
-def _parse_feed(source: FeedSource, timeout: int = 10) -> list[dict[str, Any]]:
+def _normalize_url(link: str | None, source: FeedSource) -> str | None:
+    if not link:
+        return None
+    if link.startswith("http://") or link.startswith("https://"):
+        return link
+    return f"{source.homepage.rstrip('/')}/{link.lstrip('/')}"
+
+
+def _parse_rss_source(source: FeedSource, timeout: int = 18) -> list[dict[str, Any]]:
     headers = {
-        "User-Agent": "RootAccessAggregator/1.0 (+https://example.local)",
-        "Accept": "application/rss+xml, application/atom+xml, application/xml;q=0.9, */*;q=0.8",
+        "User-Agent": "Mozilla/5.0 (compatible; RootAccessAggregator/2.0)",
+        "Accept": "application/rss+xml, application/atom+xml, application/xml;q=0.9, text/html;q=0.8, */*;q=0.7",
     }
 
     response = requests.get(source.feed_url, headers=headers, timeout=timeout)
     response.raise_for_status()
-
     parsed = feedparser.parse(response.content)
-    items: list[dict[str, Any]] = []
 
+    items: list[dict[str, Any]] = []
     for entry in parsed.entries:
-        link = entry.get("link")
+        link = _normalize_url(entry.get("link"), source)
         if not link:
             continue
 
@@ -107,12 +117,75 @@ def _parse_feed(source: FeedSource, timeout: int = 10) -> list[dict[str, Any]]:
     return items
 
 
+def _parse_html_source(source: FeedSource, timeout: int = 18) -> list[dict[str, Any]]:
+    headers = {"User-Agent": "Mozilla/5.0 (compatible; RootAccessAggregator/2.0)"}
+    response = requests.get(source.feed_url, headers=headers, timeout=timeout)
+    response.raise_for_status()
+
+    soup = BeautifulSoup(response.text, "html.parser")
+    items: list[dict[str, Any]] = []
+
+    cards = soup.select("article, .article, .post, li")
+    for card in cards[:80]:
+        link_tag = card.select_one("a[href]")
+        if not link_tag:
+            continue
+
+        title_tag = card.select_one("h1, h2, h3, h4") or link_tag
+        title = title_tag.get_text(" ", strip=True)
+        if not title or len(title) < 5:
+            continue
+
+        link = _normalize_url(link_tag.get("href"), source)
+        if not link:
+            continue
+
+        summary_tag = card.select_one("p")
+        summary = summary_tag.get_text(" ", strip=True) if summary_tag else ""
+
+        dt_tag = card.select_one("time")
+        published = _to_datetime(None, dt_tag.get("datetime") if dt_tag else dt_tag.get_text(" ", strip=True) if dt_tag else None)
+
+        image = None
+        img_tag = card.select_one("img[src]")
+        if img_tag:
+            image = _normalize_url(img_tag.get("src"), source)
+
+        items.append(
+            {
+                "company": source.company,
+                "title": title,
+                "link": link,
+                "published": published,
+                "published_iso": published.isoformat(),
+                "summary": summary,
+                "image": image,
+                "source_homepage": source.homepage,
+            }
+        )
+
+    # de-dup links and keep top 20
+    dedup: dict[str, dict[str, Any]] = {}
+    for item in items:
+        dedup.setdefault(item["link"], item)
+    return list(dedup.values())[:20]
+
+
+def _parse_source(source: FeedSource) -> list[dict[str, Any]]:
+    if source.feed_url.endswith(".xml") or "/feed" in source.feed_url or "/rss" in source.feed_url:
+        try:
+            return _parse_rss_source(source)
+        except Exception:  # noqa: BLE001
+            return _parse_html_source(source)
+    return _parse_html_source(source)
+
+
 def aggregate_posts(limit: int = 150) -> tuple[list[dict[str, Any]], list[str], list[str]]:
     posts: list[dict[str, Any]] = []
     errors: list[str] = []
 
-    with ThreadPoolExecutor(max_workers=min(8, len(SOURCES))) as executor:
-        futures = {executor.submit(_parse_feed, source): source for source in SOURCES}
+    with ThreadPoolExecutor(max_workers=min(10, len(SOURCES))) as executor:
+        futures = {executor.submit(_parse_source, source): source for source in SOURCES}
         for future in as_completed(futures):
             source = futures[future]
             try:
